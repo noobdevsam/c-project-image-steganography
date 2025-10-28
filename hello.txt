@@ -1,0 +1,25 @@
+ 
+# Free (open-source software not shipped in Fedora)
+sudo dnf install \
+  https://download1.rpmfusion.org/free/fedora/rpmfusion-free-release-$(rpm -E %fedora).noarch.rpm
+
+# Non-Free (proprietary software like NVIDIA drivers, codecs)
+sudo dnf install \
+  https://download1.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm
+
+
+
+
+
+sudo dnf groupupdate multimedia --setop="install_weak_deps=False" --exclude=PackageKit-gstreamer-plugin
+sudo dnf groupupdate sound-and-video
+
+
+
+
+flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+
+
+
+	94.140.14.14, 94.140.15.15
+2a10:50c0::ad1:ff ,2a10:50c0::ad2:ff
