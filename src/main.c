@@ -233,3 +233,118 @@ static int cli_decode(
     image_free(&img);
     return rc;
 }
+static void launch_gui(int argc, char **argv)
+{
+    gui_init(&argc, &argv);
+    gui_show_main_window();
+}
+
+int main(int argc, char **argv)
+{
+    if (argc < 2)
+    {
+        print_usage(argv[0]);
+        return 1;
+    }
+
+    /* Basic CLI parsing (not comprehensive) */
+    bool use_gui = false;
+    const char *cover = NULL;
+    const char *payload = NULL;
+    const char *out = NULL;
+    const char *stego = NULL;
+    const char *outdir = NULL;
+    const char *password = NULL;
+    int lsb_depth = 3;
+    bool do_encode = false;
+    bool do_decode = false;
+    bool auto_convert = false;
+
+    for (int i = 1; i < argc; ++i)
+    {
+        if (strcmp(argv[i], "-e") == 0 || strcmp(argv[i], "--encode") == 0)
+        {
+            if (i + 3 >= argc)
+            {
+                print_usage(argv[0]);
+                return 1;
+            }
+            do_encode = true;
+            cover = argv[++i];
+            payload = argv[++i];
+            out = argv[++i];
+        }
+        else if (strcmp(argv[i], "-d") == 0 || strcmp(argv[i], "--decode") == 0)
+        {
+            if (i + 2 >= argc)
+            {
+                print_usage(argv[0]);
+                return 1;
+            }
+            do_decode = true;
+            stego = argv[++i];
+            outdir = argv[++i];
+        }
+        else if (strcmp(argv[i], "-l") == 0 || strcmp(argv[i], "--lsb") == 0)
+        {
+            if (i + 1 >= argc)
+            {
+                print_usage(argv[0]);
+                return 1;
+            }
+            lsb_depth = atoi(argv[++i]);
+            if (lsb_depth < 1 || lsb_depth > 3)
+            {
+                fprintf(stderr, "Error: invalid LSB depth (must be 1,2,3)\n");
+                return 1;
+            }
+        }
+        else if (strcmp(argv[i], "-p") == 0 || strcmp(argv[i], "--password") == 0)
+        {
+            if (i + 1 >= argc)
+            {
+                print_usage(argv[0]);
+                return 1;
+            }
+            password = argv[++i];
+        }
+        else if (strcmp(argv[i], "-a") == 0 || strcmp(argv[i], "--auto-convert") == 0)
+        {
+            auto_convert = true;
+        }
+        else if (strcmp(argv[i], "--gui") == 0)
+        {
+            use_gui = true;
+        }
+        else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0)
+        {
+            print_usage(argv[0]);
+            return 0;
+        }
+        else
+        {
+            fprintf(stderr, "Unknown option: %s\n", argv[i]);
+            print_usage(argv[0]);
+            return 1;
+        }
+    }
+
+    if (use_gui)
+    {
+        launch_gui(argc, argv);
+        return 0;
+    }
+
+    if (do_encode)
+    {
+        return cli_encode(cover, payload, out, lsb_depth, password, auto_convert);
+    }
+
+    if (do_decode)
+    {
+        return cli_decode(stego, outdir, password);
+    }
+
+    print_usage(argv[0]);
+    return 1;
+}
