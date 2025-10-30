@@ -1,3 +1,20 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdbool.h>
+#include <gtk/gtk.h>
+#include <unistd.h>
+#include <libgen.h> // For basename()
+
+// Project headers (implemented in later files)
+#include "../include/stego_core.h"  // High-level encode/decode APIs
+#include "../include/image_io.h"    // Image loading/saving
+#include "../include/aes_wrapper.h" // AES encryption/decryption wrapper
+#include "../include/metadata.h"    // Metadata pack/unpack
+#include "../include/payload.h"     // Payload management
+#include "../include/batch.h"       // Batch processing utilities
+#include "../include/gui_main.h"    // Main GUI window
+
 static void print_usage(const char *prog)
 {
     fprintf(
