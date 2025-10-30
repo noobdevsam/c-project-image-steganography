@@ -169,3 +169,67 @@ static int cli_encode(
 
     return rc;
 }
+static int cli_decode(
+    const char *stego_path,
+    const char *out_dir,
+    const char *password)
+{
+    struct Image img = {0};
+    struct Metadata meta = {0};
+    struct Payload payload = {0};
+    int rc = 0; // Return code
+
+    rc = image_load(stego_path, &img);
+    if (rc)
+    {
+        fprintf(stderr, "Error: Failed to load stego image '%s'\n", stego_path);
+        return rc;
+    }
+
+    rc = stego_extract(&img, &meta, &payload);
+    if (rc)
+    {
+        fprintf(stderr, "Error: Failed to extract (maybe not a stego image)\n");
+        image_free(&img);
+        return rc;
+    }
+    fprintf(stderr, "[DEBUG] Decoded metadata: original filename='%s', size=%lu, lsb_depth=%d, encrypted=%d\n",
+            meta.original_filename,
+            (unsigned long)meta.file_size,
+            meta.lsb_depth,
+            meta.encrypted);
+
+    fprintf(stderr, "Extracted payload size: %lu bytes\n", (unsigned long)payload.size);
+
+    if (meta.encrypted && password && strlen(password) > 0)
+    {
+        rc = aes_decrypt_inplace(&payload, password);
+        if (rc)
+        {
+            fprintf(stderr, "Error: Failed to decrypt payload with AES (maybe wrong password)\n");
+            metadata_free(&meta);
+            payload_free(&payload);
+            image_free(&img);
+            return rc;
+        }
+    }
+
+    // Save extracted payload using original filename from metadata
+    char out_path[4096];
+    snprintf(
+        out_path,
+        sizeof(out_path),
+        "%s/%s",
+        out_dir,
+        meta.original_filename);
+    rc = payload_write_to_file(&payload, out_path);
+    if (rc)
+    {
+        fprintf(stderr, "Error: Failed to save extracted payload to '%s'\n", out_path);
+    }
+
+    metadata_free(&meta);
+    payload_free(&payload);
+    image_free(&img);
+    return rc;
+}
