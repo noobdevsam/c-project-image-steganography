@@ -24,3 +24,148 @@ static void print_usage(const char *prog)
         "      option will automatically convert JPEG covers to PNG before encoding.\n",
         prog);
 }
+static int cli_encode(
+    const char *cover_path,
+    const char *payload_path,
+    const char *out_path,
+    int lsb_depth,
+    const char *password,
+    bool auto_convert)
+{
+    struct Payload payload = {0};
+    struct Image cover = {0};
+    struct Image out = {0};
+    int rc = 0; // Return code
+    char *actual_cover_path = NULL;
+    bool converted = false;
+
+    // Check if cover is JPEG
+    if (image_is_jpeg(cover_path))
+    {
+        fprintf(stderr, "Warning: Cover image is JPEG format.\n");
+        fprintf(stderr, "JPEG is a lossy format and not suitable for steganography.\n");
+        fprintf(stderr, "LSB data will be corrupted during JPEG compression.\n");
+
+        if (auto_convert)
+        {
+            fprintf(stderr, "Auto-converting JPEG to PNG...\n");
+
+            // Generate temporary PNG path
+            char temp_png_path[4096];
+            snprintf(temp_png_path, sizeof(temp_png_path), "/tmp/stego_converted_%d.png", (int)getpid());
+
+            rc = image_convert_jpeg_to_png(cover_path, temp_png_path);
+            if (rc != 0)
+            {
+                fprintf(stderr, "Error: Failed to convert JPEG to PNG\n");
+                return rc;
+            }
+
+            actual_cover_path = strdup(temp_png_path);
+            converted = true;
+            fprintf(stderr, "Conversion successful. Using PNG for encoding.\n");
+        }
+        else
+        {
+            fprintf(stderr, "Error: Use --auto-convert flag to automatically convert to PNG.\n");
+            fprintf(stderr, "Or manually convert to PNG before encoding.\n");
+            return -1;
+        }
+    }
+    else
+    {
+        actual_cover_path = strdup(cover_path);
+    }
+
+    rc = image_load(actual_cover_path, &cover);
+    if (rc)
+    {
+        fprintf(stderr, "Error: Failed to load cover image '%s'\n", actual_cover_path);
+        if (converted)
+        {
+            unlink(actual_cover_path);
+        }
+        free(actual_cover_path);
+        return rc;
+    }
+
+    rc = payload_load_from_file(payload_path, &payload);
+    if (rc)
+    {
+        fprintf(stderr, "Error: Failed to load payload file '%s'\n", payload_path);
+        image_free(&cover);
+        if (converted)
+        {
+            unlink(actual_cover_path);
+        }
+        free(actual_cover_path);
+        return rc;
+    }
+
+    if (password && strlen(password) > 0)
+    {
+        rc = aes_encrypt_inplace(&payload, password);
+        if (rc)
+        {
+            fprintf(stderr, "Error: Failed to encrypt payload with AES\n");
+            payload_free(&payload);
+            image_free(&cover);
+            if (converted)
+            {
+                unlink(actual_cover_path);
+            }
+            free(actual_cover_path);
+            return rc;
+        }
+    }
+
+    // Use basename of payload_path for metadata
+    char *payload_path_copy = strdup(payload_path);
+    const char *payload_basename = basename(payload_path_copy);
+    struct Metadata meta = metadata_create_from_payload(payload_basename, payload.size, lsb_depth, (password && strlen(password) > 0));
+    free(payload_path_copy);
+
+    rc = stego_embed(
+        &cover,
+        &payload,
+        &meta,
+        lsb_depth,
+        &out);
+    if (rc)
+    {
+        fprintf(stderr, "Error: Failed to embed payload into cover image\n");
+        metadata_free(&meta);
+        payload_free(&payload);
+        image_free(&cover);
+        if (converted)
+        {
+            unlink(actual_cover_path);
+        }
+        free(actual_cover_path);
+        return rc;
+    }
+
+    rc = image_save(out_path, &out);
+    if (rc)
+    {
+        fprintf(stderr, "Error: Failed to save stego image to '%s'\n", out_path);
+    }
+    else if (converted)
+    {
+        fprintf(stderr, "Successfully encoded using auto-converted PNG cover.\n");
+    }
+
+    metadata_free(&meta);
+    payload_free(&payload);
+    image_free(&cover);
+    image_free(&out);
+
+    // Clean up temporary file
+    if (converted)
+    {
+        unlink(actual_cover_path);
+    }
+    free(actual_cover_path);
+
+    return rc;
+}
