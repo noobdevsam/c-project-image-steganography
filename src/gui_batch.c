@@ -154,3 +154,93 @@ static void on_task_payload_file_selected(GObject *source, GAsyncResult *result,
     if (error != NULL)
         g_error_free(error);
 }
+
+/* Callback: Input file chooser button clicked */
+static void on_task_input_chooser_clicked(GtkButton *button, gpointer user_data)
+{
+    BatchTaskPanel *panel = (BatchTaskPanel *)user_data;
+    
+    GtkFileDialog *dialog = gtk_file_dialog_new();
+    const char *title = panel->is_encode ? "Select Input Image" : "Select Stego Image";
+    gtk_file_dialog_set_title(dialog, title);
+    
+    // Create a file filter for image files
+    GtkFileFilter *filter = gtk_file_filter_new();
+    gtk_file_filter_set_name(filter, "Image Files");
+    gtk_file_filter_add_pattern(filter, "*.png");
+    gtk_file_filter_add_pattern(filter, "*.jpg");
+    gtk_file_filter_add_pattern(filter, "*.jpeg");
+    
+    GListStore *filters = g_list_store_new(GTK_TYPE_FILE_FILTER);
+    g_list_store_append(filters, filter);
+    gtk_file_dialog_set_filters(dialog, G_LIST_MODEL(filters));
+    g_object_unref(filter);
+    g_object_unref(filters);
+    
+    gtk_file_dialog_open(dialog, NULL, NULL, on_task_input_selected, panel);
+}
+
+/* Callback: Output directory chooser button clicked */
+static void on_task_output_chooser_clicked(GtkButton *button, gpointer user_data)
+{
+    BatchTaskPanel *panel = (BatchTaskPanel *)user_data;
+    
+    GtkFileDialog *dialog = gtk_file_dialog_new();
+    gtk_file_dialog_set_title(dialog, "Select Output Directory");
+    
+    gtk_file_dialog_select_folder(dialog, NULL, NULL, on_task_output_selected, panel);
+}
+
+/* Callback: Payload file chooser button clicked (encode only) */
+static void on_task_payload_file_chooser_clicked(GtkButton *button, gpointer user_data)
+{
+    BatchTaskPanel *panel = (BatchTaskPanel *)user_data;
+    
+    GtkFileDialog *dialog = gtk_file_dialog_new();
+    gtk_file_dialog_set_title(dialog, "Select Payload File");
+    
+    gtk_file_dialog_open(dialog, NULL, NULL, on_task_payload_file_selected, panel);
+}
+
+/* Callback: Payload type changed (encode only) */
+static void on_task_payload_type_changed(GtkDropDown *dropdown, GParamSpec *pspec, gpointer user_data)
+{
+    BatchTaskPanel *panel = (BatchTaskPanel *)user_data;
+    guint selected = gtk_drop_down_get_selected(dropdown);
+    
+    // 0 = Text Message, 1 = File
+    if (selected == 0) {
+        gtk_stack_set_visible_child_name(GTK_STACK(panel->payload_stack), "text");
+    } else {
+        gtk_stack_set_visible_child_name(GTK_STACK(panel->payload_stack), "file");
+    }
+    update_start_button_sensitivity();
+}
+
+/* Callback: Remove task button clicked */
+static void on_remove_task_clicked(GtkButton *button, gpointer user_data)
+{
+    BatchTaskPanel *panel = (BatchTaskPanel *)user_data;
+    
+    // Don't allow removal if task is processing
+    if (panel->is_processing) {
+        return;
+    }
+    
+    // Save container widget pointer before removing from hash table
+    // (hash table removal will free the panel structure)
+    GtkWidget *container = panel->container;
+    GtkWidget *parent = gtk_widget_get_parent(container);
+    
+    // Remove from hash table (this frees the panel via batch_task_panel_free)
+    g_hash_table_remove(task_panels, panel->task_id);
+    
+    // Remove from UI using saved container pointer
+    if (parent) {
+        gtk_box_remove(GTK_BOX(parent), container);
+    }
+    
+    // Update button sensitivity
+    update_start_button_sensitivity();
+}
+
