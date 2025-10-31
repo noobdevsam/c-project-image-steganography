@@ -9,6 +9,13 @@
 #include <string.h>
 #include <stdio.h>
 
+#ifdef _WIN32
+	#include <process.h>
+	#define getpid _getpid
+#else
+	#include <unistd.h>
+#endif
+
 static GtkWidget *window;
 static GtkWidget *notebook_tabs; // encode / decode / batch
 
