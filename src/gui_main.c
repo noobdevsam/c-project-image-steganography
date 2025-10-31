@@ -252,3 +252,301 @@ static void on_encode_input_chooser_clicked(GtkButton *button, gpointer user_dat
 }
 
 
+/* Callback: Open decode input file dialog */
+static void on_decode_input_chooser_clicked(GtkButton *button, gpointer user_data)
+{
+    GtkFileDialog *dialog = gtk_file_dialog_new();
+    gtk_file_dialog_set_title(dialog, "Select Stego Image");
+    
+    // Create a file filter for image files
+    GtkFileFilter *filter = gtk_file_filter_new();
+    gtk_file_filter_set_name(filter, "Image Files");
+    gtk_file_filter_add_pattern(filter, "*.png");
+    gtk_file_filter_add_pattern(filter, "*.jpg");
+    gtk_file_filter_add_pattern(filter, "*.jpeg");
+    
+    GListStore *filters = g_list_store_new(GTK_TYPE_FILE_FILTER);
+    g_list_store_append(filters, filter);
+    gtk_file_dialog_set_filters(dialog, G_LIST_MODEL(filters));
+    g_object_unref(filter);
+    g_object_unref(filters);
+    
+    gtk_file_dialog_open(dialog, GTK_WINDOW(window), NULL, on_decode_input_file_selected, NULL);
+}
+
+/* Callback: Open encode output directory dialog */
+static void on_encode_output_chooser_clicked(GtkButton *button, gpointer user_data)
+{
+    GtkFileDialog *dialog = gtk_file_dialog_new();
+    gtk_file_dialog_set_title(dialog, "Select Output Directory");
+    
+    gtk_file_dialog_select_folder(dialog, GTK_WINDOW(window), NULL, on_encode_output_file_selected, NULL);
+}
+
+/* Callback: Open decode output directory dialog */
+static void on_decode_output_chooser_clicked(GtkButton *button, gpointer user_data)
+{
+    GtkFileDialog *dialog = gtk_file_dialog_new();
+    gtk_file_dialog_set_title(dialog, "Select Output Directory");
+    
+    gtk_file_dialog_select_folder(dialog, GTK_WINDOW(window), NULL, on_decode_output_file_selected, NULL);
+}
+
+/* Callback: Encode single file */
+static void on_encode_clicked(GtkButton *button, gpointer user_data)
+{
+    if (!encode_selected_input_file || !encode_selected_output_file)
+    {
+        GtkAlertDialog *dialog = gtk_alert_dialog_new("Please select input image and output directory.");
+        gtk_alert_dialog_show(dialog, GTK_WINDOW(window));
+        g_object_unref(dialog);
+        return;
+    }
+    
+    // Get payload type
+    guint payload_type = gtk_drop_down_get_selected(GTK_DROP_DOWN(encode_combo_payload_type));
+    
+    // Check payload source
+    if (payload_type == 1 && !encode_selected_payload_file) {
+        GtkAlertDialog *dialog = gtk_alert_dialog_new("Please select a payload file.");
+        gtk_alert_dialog_show(dialog, GTK_WINDOW(window));
+        g_object_unref(dialog);
+        return;
+    }
+    
+    GtkEntryBuffer *buffer = gtk_entry_get_buffer(GTK_ENTRY(encode_entry_password));
+    const gchar *password = gtk_entry_buffer_get_text(buffer);
+    gint lsb_depth = gtk_drop_down_get_selected(GTK_DROP_DOWN(encode_combo_lsb_depth)) + 1;
+
+    gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(encode_progress_bar), 0.1);
+    
+    // Get input path and check if it's JPEG
+    char *input_path = g_file_get_path(encode_selected_input_file);
+    char *actual_cover_path = NULL;
+    bool jpeg_converted = false;
+    
+    if (image_is_jpeg(input_path)) {
+        // Show warning about JPEG and wait for user to acknowledge
+        char warning_msg[512];
+        snprintf(warning_msg, sizeof(warning_msg),
+                "The selected cover image is in JPEG format.\n\n"
+                "JPEG is a lossy format and not suitable for steganography "
+                "because it corrupts LSB data during compression.\n\n"
+                "The image will be automatically converted to PNG format "
+                "before encoding to ensure reliable extraction.\n\n"
+                "Click OK to continue.");
+        
+        GtkAlertDialog *warning_dialog = gtk_alert_dialog_new("%s", warning_msg);
+        gtk_alert_dialog_set_modal(warning_dialog, TRUE);
+        gtk_alert_dialog_set_buttons(warning_dialog, (const char *[]){"OK", NULL});
+        
+        // Create dialog data and main loop for synchronous behavior
+        DialogData dialog_data = {FALSE, g_main_loop_new(NULL, FALSE)};
+        
+        // Show dialog with callback
+        gtk_alert_dialog_choose(warning_dialog, GTK_WINDOW(window), NULL,
+                               on_jpeg_warning_response, &dialog_data);
+        
+        // Run nested event loop until dialog is dismissed
+        g_main_loop_run(dialog_data.loop);
+        
+        // Cleanup
+        g_main_loop_unref(dialog_data.loop);
+        g_object_unref(warning_dialog);
+        
+        // Convert JPEG to PNG
+        char temp_png_path[1024];
+        snprintf(temp_png_path, sizeof(temp_png_path), "/tmp/stego_converted_%d.png", (int)getpid());
+        
+        if (image_convert_jpeg_to_png(input_path, temp_png_path) != 0) {
+            g_free(input_path);
+            GtkAlertDialog *dialog = gtk_alert_dialog_new("Failed to convert JPEG to PNG!");
+            gtk_alert_dialog_show(dialog, GTK_WINDOW(window));
+            g_object_unref(dialog);
+            gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(encode_progress_bar), 0.0);
+            return;
+        }
+        
+        actual_cover_path = strdup(temp_png_path);
+        jpeg_converted = true;
+    } else {
+        actual_cover_path = strdup(input_path);
+    }
+    g_free(input_path);
+    
+    // Load cover image
+    struct Image cover = {0};
+    if (image_load(actual_cover_path, &cover) != 0) {
+        if (jpeg_converted) {
+            unlink(actual_cover_path);
+        }
+        free(actual_cover_path);
+        GtkAlertDialog *dialog = gtk_alert_dialog_new("Failed to load cover image!");
+        gtk_alert_dialog_show(dialog, GTK_WINDOW(window));
+        g_object_unref(dialog);
+        gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(encode_progress_bar), 0.0);
+        return;
+    }
+    
+    gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(encode_progress_bar), 0.3);
+   
+    // Create payload
+    struct Payload payload = {0};
+    const char *payload_filename = "message.txt";
+    
+    if (payload_type == 0) {
+        // Text message
+        GtkTextBuffer *text_buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(encode_text_view_message));
+        GtkTextIter start, end;
+        gtk_text_buffer_get_bounds(text_buffer, &start, &end);
+        char *text = gtk_text_buffer_get_text(text_buffer, &start, &end, FALSE);
+        
+        if (strlen(text) == 0) {
+            g_free(text);
+            image_free(&cover);
+            if (jpeg_converted) {
+                unlink(actual_cover_path);
+            }
+            free(actual_cover_path);
+            GtkAlertDialog *dialog = gtk_alert_dialog_new("Please enter a message to encode!");
+            gtk_alert_dialog_show(dialog, GTK_WINDOW(window));
+            g_object_unref(dialog);
+            gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(encode_progress_bar), 0.0);
+            return;
+        }
+        
+        if (payload_from_text(text, &payload) != 0) {
+            g_free(text);
+            image_free(&cover);
+            if (jpeg_converted) {
+                unlink(actual_cover_path);
+            }
+            free(actual_cover_path);
+            GtkAlertDialog *dialog = gtk_alert_dialog_new("Failed to create payload from text!");
+            gtk_alert_dialog_show(dialog, GTK_WINDOW(window));
+            g_object_unref(dialog);
+            gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(encode_progress_bar), 0.0);
+            return;
+        }
+        g_free(text);
+    } else {
+        // File payload
+        char *payload_path = g_file_get_path(encode_selected_payload_file);
+        payload_filename = g_file_get_basename(encode_selected_payload_file);
+        
+        if (payload_load_from_file(payload_path, &payload) != 0) {
+            g_free(payload_path);
+            image_free(&cover);
+            if (jpeg_converted) {
+                unlink(actual_cover_path);
+            }
+            free(actual_cover_path);
+            GtkAlertDialog *dialog = gtk_alert_dialog_new("Failed to load payload file!");
+            gtk_alert_dialog_show(dialog, GTK_WINDOW(window));
+            g_object_unref(dialog);
+            gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(encode_progress_bar), 0.0);
+            return;
+        }
+        g_free(payload_path);
+    }
+    
+    gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(encode_progress_bar), 0.5);
+    
+    // Encrypt if password is provided
+    bool encrypted = false;
+    if (password && strlen(password) > 0) {
+        if (aes_encrypt_inplace(&payload, password) == 0) {
+            encrypted = true;
+        }
+    }
+    
+    // Create metadata
+    struct Metadata meta = metadata_create_from_payload(payload_filename, payload.size, lsb_depth, encrypted);
+    
+    gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(encode_progress_bar), 0.6);
+    
+    // Embed payload
+    struct Image stego = {0};
+    int result = stego_embed(&cover, &payload, &meta, lsb_depth, &stego);
+    
+    image_free(&cover);
+    payload_free(&payload);
+    
+    if (result != 0) {
+        if (jpeg_converted) {
+            unlink(actual_cover_path);
+        }
+        free(actual_cover_path);
+        GtkAlertDialog *dialog = gtk_alert_dialog_new("Failed to embed payload! Image may be too small.");
+        gtk_alert_dialog_show(dialog, GTK_WINDOW(window));
+        g_object_unref(dialog);
+        gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(encode_progress_bar), 0.0);
+        return;
+    }
+    
+    gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(encode_progress_bar), 0.8);
+    
+    // Save output - generate filename in the selected directory
+    char *output_dir = g_file_get_path(encode_selected_output_file);
+    char *input_basename = g_file_get_basename(encode_selected_input_file);
+    
+    // Generate output filename: input_basename + "_stego.png"
+    char *dot = strrchr(input_basename, '.');
+    char output_filename[512];
+
+    srand(time(NULL));
+    int random_suffix = rand() % 10000;
+
+    if (dot) {
+        size_t base_len = dot - input_basename;
+        snprintf(output_filename, sizeof(output_filename), "%.*s_stego_%d.png", (int)base_len, input_basename, random_suffix);
+    } else {
+        snprintf(output_filename, sizeof(output_filename), "%s_stego_%d.png", input_basename, random_suffix);
+    }
+    
+    char output_path[1024];
+    snprintf(output_path, sizeof(output_path), "%s/%s", output_dir, output_filename);
+    
+    if (image_save(output_path, &stego) != 0) {
+        g_free(output_dir);
+        g_free(input_basename);
+        image_free(&stego);
+        if (jpeg_converted) {
+            unlink(actual_cover_path);
+        }
+        free(actual_cover_path);
+        GtkAlertDialog *dialog = gtk_alert_dialog_new("Failed to save output image!");
+        gtk_alert_dialog_show(dialog, GTK_WINDOW(window));
+        g_object_unref(dialog);
+        gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(encode_progress_bar), 0.0);
+        return;
+    }
+    
+    // Clean up temporary file
+    if (jpeg_converted) {
+        unlink(actual_cover_path);
+    }
+    free(actual_cover_path);
+    
+    g_free(output_dir);
+    g_free(input_basename);
+    image_free(&stego);
+    
+    gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(encode_progress_bar), 1.0);
+
+    char success_msg[1024];
+    if (jpeg_converted) {
+        snprintf(success_msg, sizeof(success_msg), 
+                "Encoding completed successfully!\n"
+                "JPEG cover was auto-converted to PNG.\n"
+                "Output saved as: %s", output_filename);
+    } else {
+        snprintf(success_msg, sizeof(success_msg), 
+                "Encoding completed successfully!\n"
+                "Output saved as: %s", output_filename);
+    }
+    GtkAlertDialog *dialog = gtk_alert_dialog_new("%s", success_msg);
+    gtk_alert_dialog_show(dialog, GTK_WINDOW(window));
+    g_object_unref(dialog);
+}
+
