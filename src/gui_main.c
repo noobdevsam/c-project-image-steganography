@@ -550,3 +550,226 @@ static void on_encode_clicked(GtkButton *button, gpointer user_data)
     g_object_unref(dialog);
 }
 
+
+/* Callback: Decode single file */
+static void on_decode_clicked(GtkButton *button, gpointer user_data)
+{
+    if (!decode_selected_input_file || !decode_selected_output_file)
+    {
+        GtkAlertDialog *dialog = gtk_alert_dialog_new("Please select input image and output directory.");
+        gtk_alert_dialog_show(dialog, GTK_WINDOW(window));
+        g_object_unref(dialog);
+        return;
+    }
+    
+    GtkEntryBuffer *buffer = gtk_entry_get_buffer(GTK_ENTRY(decode_entry_password));
+    const gchar *password = gtk_entry_buffer_get_text(buffer);
+
+    gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(decode_progress_bar), 0.1);
+    
+    // Load stego image
+    char *input_path = g_file_get_path(decode_selected_input_file);
+    struct Image stego = {0};
+    if (image_load(input_path, &stego) != 0) {
+        g_free(input_path);
+        GtkAlertDialog *dialog = gtk_alert_dialog_new("Failed to load stego image!");
+        gtk_alert_dialog_show(dialog, GTK_WINDOW(window));
+        g_object_unref(dialog);
+        return;
+    }
+    g_free(input_path);
+    
+    gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(decode_progress_bar), 0.3);
+    
+    // Extract payload and metadata
+    struct Metadata meta = {0};
+    struct Payload payload = {0};
+    
+    int result = stego_extract(&stego, &meta, &payload);
+    image_free(&stego);
+    
+    if (result != 0) {
+        GtkAlertDialog *dialog = gtk_alert_dialog_new("Failed to extract payload! Invalid stego image or corrupted data.");
+        gtk_alert_dialog_show(dialog, GTK_WINDOW(window));
+        g_object_unref(dialog);
+        gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(decode_progress_bar), 0.0);
+        return;
+    }
+    
+    gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(decode_progress_bar), 0.6);
+    
+    // Decrypt if password is provided and payload is encrypted
+    if (payload.encrypted && password && strlen(password) > 0) {
+        if (aes_decrypt_inplace(&payload, password) != 0) {
+            payload_free(&payload);
+            GtkAlertDialog *dialog = gtk_alert_dialog_new("Failed to decrypt payload! Wrong password?");
+            gtk_alert_dialog_show(dialog, GTK_WINDOW(window));
+            g_object_unref(dialog);
+            gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(decode_progress_bar), 0.0);
+            return;
+        }
+    }
+    
+    gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(decode_progress_bar), 0.8);
+    
+    // Save extracted payload in the selected directory
+    char *output_dir = g_file_get_path(decode_selected_output_file);
+    
+    // Use the original filename from metadata
+    char output_path[1024];
+    snprintf(output_path, sizeof(output_path), "%s/%s", output_dir, meta.original_filename);
+    
+    if (payload_write_to_file(&payload, output_path) != 0) {
+        g_free(output_dir);
+        payload_free(&payload);
+        GtkAlertDialog *dialog = gtk_alert_dialog_new("Failed to save extracted payload!");
+        gtk_alert_dialog_show(dialog, GTK_WINDOW(window));
+        g_object_unref(dialog);
+        gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(decode_progress_bar), 0.0);
+        return;
+    }
+    g_free(output_dir);
+    payload_free(&payload);
+    
+    gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(decode_progress_bar), 1.0);
+
+    char message[1024];
+    snprintf(message, sizeof(message), "Decoding completed successfully!\nExtracted file: %s\nSaved to: %s", 
+             meta.original_filename, output_path);
+    GtkAlertDialog *dialog = gtk_alert_dialog_new(message);
+    gtk_alert_dialog_show(dialog, GTK_WINDOW(window));
+    g_object_unref(dialog);
+}
+
+/* Create Encode tab content */
+static GtkWidget* create_encode_tab(void)
+{
+    GtkWidget *tab_encode = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
+    gtk_widget_set_margin_top(tab_encode, 10);
+    gtk_widget_set_margin_bottom(tab_encode, 10);
+    gtk_widget_set_margin_start(tab_encode, 10);
+    gtk_widget_set_margin_end(tab_encode, 10);
+
+    GtkWidget *grid = gtk_grid_new();
+    gtk_grid_set_row_spacing(GTK_GRID(grid), 10);
+    gtk_grid_set_column_spacing(GTK_GRID(grid), 10);
+    gtk_widget_set_hexpand(grid, TRUE);
+    gtk_widget_set_vexpand(grid, TRUE);
+    gtk_box_append(GTK_BOX(tab_encode), grid);
+
+    // Input Image
+    GtkWidget *label_in = gtk_label_new("Input Image:");
+    gtk_widget_set_halign(label_in, GTK_ALIGN_END);
+    
+    encode_file_chooser_input = gtk_button_new_with_label("Select input image");
+    gtk_widget_set_hexpand(encode_file_chooser_input, TRUE);
+
+    // Output Directory
+    GtkWidget *label_out = gtk_label_new("Output Directory:");
+    gtk_widget_set_halign(label_out, GTK_ALIGN_END);
+    
+    encode_file_chooser_output = gtk_button_new_with_label("Select output directory");
+    gtk_widget_set_hexpand(encode_file_chooser_output, TRUE);
+
+    // Payload Type
+    GtkWidget *label_payload_type = gtk_label_new("Payload Type:");
+    gtk_widget_set_halign(label_payload_type, GTK_ALIGN_END);
+    
+    const char *payload_type_options[] = {"Text Message", "File", NULL};
+    GtkStringList *payload_type_list = gtk_string_list_new(payload_type_options);
+    encode_combo_payload_type = gtk_drop_down_new(G_LIST_MODEL(payload_type_list), NULL);
+    gtk_drop_down_set_selected(GTK_DROP_DOWN(encode_combo_payload_type), 0);
+
+    // Payload input area
+    GtkWidget *label_payload = gtk_label_new("Payload:");
+    gtk_widget_set_halign(label_payload, GTK_ALIGN_START);
+    gtk_widget_set_valign(label_payload, GTK_ALIGN_START);
+    
+    // Create a stack to hold text message input and file chooser
+    encode_payload_stack = gtk_stack_new();
+    gtk_widget_set_vexpand(encode_payload_stack, TRUE);
+    gtk_widget_set_hexpand(encode_payload_stack, TRUE);
+    
+    // Text message input with improved visibility
+    encode_text_view_message = gtk_text_view_new();
+    gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(encode_text_view_message), GTK_WRAP_WORD);
+    gtk_widget_set_vexpand(encode_text_view_message, TRUE);
+    gtk_widget_set_hexpand(encode_text_view_message, TRUE);
+    
+    // Create scrolled window with improved styling
+    encode_scroll_window_message = gtk_scrolled_window_new();
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(encode_scroll_window_message), encode_text_view_message);
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(encode_scroll_window_message), 
+                                    GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
+    gtk_widget_set_vexpand(encode_scroll_window_message, TRUE);
+    gtk_widget_set_hexpand(encode_scroll_window_message, TRUE);
+    gtk_scrolled_window_set_has_frame(GTK_SCROLLED_WINDOW(encode_scroll_window_message), TRUE);
+    
+    // Set minimum height for the text view to make it more visible
+    gtk_widget_set_size_request(encode_scroll_window_message, -1, 180);
+    
+    // File payload chooser
+    encode_file_chooser_payload = gtk_button_new_with_label("Select payload file");
+    gtk_widget_set_hexpand(encode_file_chooser_payload, TRUE);
+    gtk_widget_set_valign(encode_file_chooser_payload, GTK_ALIGN_START);
+    
+    // Add both widgets to the stack
+    gtk_stack_add_named(GTK_STACK(encode_payload_stack), encode_scroll_window_message, "text");
+    gtk_stack_add_named(GTK_STACK(encode_payload_stack), encode_file_chooser_payload, "file");
+    
+    // Set default to text
+    gtk_stack_set_visible_child_name(GTK_STACK(encode_payload_stack), "text");
+
+    // Password
+    GtkWidget *label_pass = gtk_label_new("Password:");
+    gtk_widget_set_halign(label_pass, GTK_ALIGN_END);
+    
+    encode_entry_password = gtk_entry_new();
+    gtk_entry_set_visibility(GTK_ENTRY(encode_entry_password), FALSE);
+    gtk_widget_set_hexpand(encode_entry_password, TRUE);
+
+    // LSB Depth
+    GtkWidget *label_lsb = gtk_label_new("LSB Depth:");
+    gtk_widget_set_halign(label_lsb, GTK_ALIGN_END);
+    
+    const char *lsb_options[] = {"1", "2", "3", NULL};
+    GtkStringList *string_list = gtk_string_list_new(lsb_options);
+    encode_combo_lsb_depth = gtk_drop_down_new(G_LIST_MODEL(string_list), NULL);
+    gtk_drop_down_set_selected(GTK_DROP_DOWN(encode_combo_lsb_depth), 0);
+
+    // Progress bar
+    encode_progress_bar = gtk_progress_bar_new();
+    gtk_widget_set_hexpand(encode_progress_bar, TRUE);
+
+    // Encode button
+    button_encode = gtk_button_new_with_label("Encode");
+    gtk_widget_set_hexpand(button_encode, TRUE);
+
+    // Attach widgets to grid
+    gtk_grid_attach(GTK_GRID(grid), label_in, 0, 0, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), encode_file_chooser_input, 1, 0, 2, 1);
+    gtk_grid_attach(GTK_GRID(grid), label_out, 0, 1, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), encode_file_chooser_output, 1, 1, 2, 1);
+    gtk_grid_attach(GTK_GRID(grid), label_payload_type, 0, 2, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), encode_combo_payload_type, 1, 2, 2, 1);
+    gtk_grid_attach(GTK_GRID(grid), label_payload, 0, 3, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), encode_payload_stack, 1, 3, 2, 1);
+    gtk_grid_attach(GTK_GRID(grid), label_pass, 0, 4, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), encode_entry_password, 1, 4, 2, 1);
+    gtk_grid_attach(GTK_GRID(grid), label_lsb, 0, 5, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), encode_combo_lsb_depth, 1, 5, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), encode_progress_bar, 0, 6, 3, 1);
+    gtk_grid_attach(GTK_GRID(grid), button_encode, 0, 7, 3, 1);
+
+    // Connect signals
+    g_signal_connect(encode_file_chooser_input, "clicked", G_CALLBACK(on_encode_input_chooser_clicked), NULL);
+    g_signal_connect(encode_file_chooser_output, "clicked", G_CALLBACK(on_encode_output_chooser_clicked), NULL);
+    g_signal_connect(encode_file_chooser_payload, "clicked", G_CALLBACK(on_encode_payload_chooser_clicked), NULL);
+    g_signal_connect(encode_combo_payload_type, "notify::selected", G_CALLBACK(on_encode_payload_type_changed), NULL);
+    g_signal_connect(button_encode, "clicked", G_CALLBACK(on_encode_clicked), NULL);
+
+    return tab_encode;
+}
+
+
+
