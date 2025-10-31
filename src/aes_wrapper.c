@@ -319,3 +319,150 @@ static ssize_t pkcs7_unpad(unsigned char *buf, size_t buf_len, size_t block_size
     return (ssize_t)(buf_len - pad);
 }
 
+/* ---------- Public API Implementation ---------- */
+
+int aes_encrypt_inplace(struct Payload *payload, const char *password)
+{
+    if (!payload || !password)
+        return -1;
+    if (payload->size == 0 || payload->data == NULL)
+        return -2;
+
+    const size_t SALT_LEN = 16;
+    const size_t IV_LEN = 16;
+    const uint32_t PBKDF2_ITERS = 100000;
+    const size_t KEY_LEN = 32; /* AES-256 */
+
+    uint8_t salt[SALT_LEN];
+    uint8_t iv[IV_LEN];
+    if (secure_random_bytes(salt, SALT_LEN) != 0)
+        return -3;
+    if (secure_random_bytes(iv, IV_LEN) != 0)
+        return -4;
+
+    uint8_t key[KEY_LEN];
+    if (pbkdf2_hmac_sha256((const uint8_t *)password, strlen(password), salt, SALT_LEN, PBKDF2_ITERS, key, KEY_LEN) != 0)
+    {
+        return -5;
+    }
+
+    /* PKCS7 pad plaintext */
+    size_t padded_len;
+    unsigned char *padded = pkcs7_pad(payload->data, payload->size, 16, &padded_len);
+    if (!padded)
+        return -6;
+
+    /* Allocate ciphertext buffer (same length as padded) */
+    unsigned char *cipher = malloc(padded_len);
+    if (!cipher)
+    {
+        free(padded);
+        return -7;
+    }
+    memcpy(cipher, padded, padded_len); /* tiny-AES-c encrypts in-place */
+
+    /* Setup AES context and encrypt in-place using tiny-AES-c */
+    struct AES_ctx ctx;
+    AES_init_ctx_iv(&ctx, key, iv);
+    AES_CBC_encrypt_buffer(&ctx, cipher, (uint32_t)padded_len);
+
+    /* Build final payload: salt||iv||ciphertext */
+    size_t final_len = SALT_LEN + IV_LEN + padded_len;
+    unsigned char *final_buf = malloc(final_len);
+    if (!final_buf)
+    {
+        free(padded);
+        free(cipher);
+        return -8;
+    }
+    memcpy(final_buf, salt, SALT_LEN);
+    memcpy(final_buf + SALT_LEN, iv, IV_LEN);
+    memcpy(final_buf + SALT_LEN + IV_LEN, cipher, padded_len);
+
+    /* Replace payload buffer */
+    memset(payload->data, 0, payload->size); /* zero old plaintext */
+    free(payload->data);
+    free(padded);
+    free(cipher);
+
+    payload->data = final_buf;
+    payload->size = final_len;
+    payload->encrypted = 1;
+
+    /* zero sensitive material */
+    memset(key, 0, sizeof(key));
+    memset(salt, 0, sizeof(salt));
+    memset(iv, 0, sizeof(iv));
+
+    return 0;
+}
+
+int aes_decrypt_inplace(struct Payload *payload, const char *password)
+{
+    if (!payload || !password)
+        return -1;
+    if (payload->size < 32)
+        return -2; /* must be at least salt+iv */
+
+    const size_t SALT_LEN = 16;
+    const size_t IV_LEN = 16;
+    const uint32_t PBKDF2_ITERS = 100000;
+    const size_t KEY_LEN = 32;
+
+    const unsigned char *buf = payload->data;
+    size_t buf_len = payload->size;
+
+    const unsigned char *salt = buf;
+    const unsigned char *iv = buf + SALT_LEN;
+    const unsigned char *cipher = buf + SALT_LEN + IV_LEN;
+    size_t cipher_len = buf_len - (SALT_LEN + IV_LEN);
+    if ((cipher_len % 16) != 0)
+        return -3;
+
+    uint8_t key[KEY_LEN];
+    if (pbkdf2_hmac_sha256((const uint8_t *)password, strlen(password), salt, SALT_LEN, PBKDF2_ITERS, key, KEY_LEN) != 0)
+    {
+        return -4;
+    }
+
+    unsigned char *plain = malloc(cipher_len);
+    if (!plain)
+    {
+        memset(key, 0, sizeof(key));
+        return -5;
+    }
+    memcpy(plain, cipher, cipher_len);
+
+    struct AES_ctx ctx;
+    AES_init_ctx_iv(&ctx, key, iv);
+    AES_CBC_decrypt_buffer(&ctx, plain, (uint32_t)cipher_len);
+
+    /* Unpad PKCS7 */
+    ssize_t unpadded_len = pkcs7_unpad(plain, cipher_len, 16);
+    if (unpadded_len < 0)
+    {
+        free(plain);
+        memset(key, 0, sizeof(key));
+        return -6;
+    }
+
+    /* Replace payload buffer with plaintext */
+    free(payload->data);
+    payload->data = malloc((size_t)unpadded_len);
+    if (!payload->data)
+    {
+        free(plain);
+        memset(key, 0, sizeof(key));
+        return -7;
+    }
+    memcpy(payload->data, plain, (size_t)unpadded_len);
+    payload->size = (size_t)unpadded_len;
+    payload->encrypted = 0;
+
+    /* cleanup */
+    memset(plain, 0, cipher_len);
+    free(plain);
+    memset(key, 0, sizeof(key));
+
+    return 0;
+}
