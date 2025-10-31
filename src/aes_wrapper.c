@@ -272,3 +272,50 @@ static int pbkdf2_hmac_sha256(const uint8_t *password, size_t password_len,
     return 0;
 }
 
+/* ---------- Utility functions ---------- */
+
+static int secure_random_bytes(uint8_t *buf, size_t len)
+{
+    int fd = open("/dev/urandom", O_RDONLY);
+    if (fd < 0)
+        return -1;
+    ssize_t r = read(fd, buf, len);
+    close(fd);
+    if ((size_t)r != len)
+        return -2;
+    return 0;
+}
+
+/* PKCS#7 padding: pad data buffer and return new buffer (caller must free).
+ * - block_size typically 16.
+ * - out_len will be multiple of block_size.
+ */
+static unsigned char *pkcs7_pad(const unsigned char *in, size_t in_len, size_t block_size, size_t *out_len)
+{
+    size_t pad = block_size - (in_len % block_size);
+    size_t total = in_len + pad;
+    unsigned char *out = malloc(total);
+    if (!out)
+        return NULL;
+    memcpy(out, in, in_len);
+    memset(out + in_len, (unsigned char)pad, pad);
+    *out_len = total;
+    return out;
+}
+
+/* PKCS#7 unpad in-place; returns new length or -1 on error */
+static ssize_t pkcs7_unpad(unsigned char *buf, size_t buf_len, size_t block_size)
+{
+    if (buf_len == 0 || (buf_len % block_size) != 0)
+        return -1;
+    unsigned char pad = buf[buf_len - 1];
+    if (pad == 0 || pad > block_size)
+        return -1;
+    for (size_t i = 0; i < pad; ++i)
+    {
+        if (buf[buf_len - 1 - i] != pad)
+            return -1;
+    }
+    return (ssize_t)(buf_len - pad);
+}
+
