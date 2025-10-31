@@ -605,3 +605,181 @@ static void start_task_panel(BatchTaskPanel *panel)
     }
 }
 
+
+/* Start all ready tasks */
+static void start_all_tasks(void)
+{
+    GHashTableIter iter;
+    gpointer key, value;
+    g_hash_table_iter_init(&iter, task_panels);
+    
+    while (g_hash_table_iter_next(&iter, &key, &value)) {
+        BatchTaskPanel *panel = (BatchTaskPanel *)value;
+        if (!panel->is_processing && task_panel_is_ready(panel)) {
+            start_task_panel(panel);
+        }
+    }
+    
+    // Disable start button while tasks are running
+    gtk_widget_set_sensitive(start_all_button, FALSE);
+}
+
+/* Callback: When user clicks "+ Add Task" */
+static void on_add_task_clicked(GtkButton *button, gpointer user_data)
+{
+    // Get selected mode
+    guint selected = gtk_drop_down_get_selected(GTK_DROP_DOWN(mode_combo));
+    gboolean is_encode = (selected == 0); // 0 = Encode, 1 = Decode
+    
+    // Create new task panel
+    GtkWidget *panel_widget = create_batch_task_panel(is_encode);
+    
+    // Add to task list
+    gtk_box_append(GTK_BOX(task_list_box), panel_widget);
+    
+    // Update button sensitivity
+    update_start_button_sensitivity();
+}
+
+/* Callback: Start All Tasks button clicked */
+static void on_start_all_clicked(GtkButton *button, gpointer user_data)
+{
+    start_all_tasks();
+}
+
+/* Public function: create the entire batch tab */
+GtkWidget *gui_batch_create_tab(void)
+{
+    GtkWidget *main_vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
+    gtk_widget_set_margin_top(main_vbox, 10);
+    gtk_widget_set_margin_bottom(main_vbox, 10);
+    gtk_widget_set_margin_start(main_vbox, 10);
+    gtk_widget_set_margin_end(main_vbox, 10);
+
+    // Initialize task panels hash table
+    task_panels = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, 
+                                        (GDestroyNotify)batch_task_panel_free);
+
+    // Top controls box: Mode selector and Add Task button
+    GtkWidget *top_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
+    
+    // Mode selection: Encode / Decode
+    GtkWidget *label_mode = gtk_label_new("Mode:");
+    const char *mode_options[] = {"Encode", "Decode", NULL};
+    GtkStringList *mode_list = gtk_string_list_new(mode_options);
+    mode_combo = gtk_drop_down_new(G_LIST_MODEL(mode_list), NULL);
+    gtk_drop_down_set_selected(GTK_DROP_DOWN(mode_combo), 0); // Default = Encode
+    
+    // Add Task button
+    GtkWidget *button_add = gtk_button_new_with_label("+ Add Task");
+    
+    gtk_box_append(GTK_BOX(top_box), label_mode);
+    gtk_box_append(GTK_BOX(top_box), mode_combo);
+    gtk_widget_set_hexpand(mode_combo, FALSE);
+    gtk_box_append(GTK_BOX(top_box), button_add);
+    gtk_widget_set_halign(button_add, GTK_ALIGN_END);
+    gtk_widget_set_hexpand(button_add, TRUE);
+    
+    gtk_box_append(GTK_BOX(main_vbox), top_box);
+
+    // Scrollable task list
+    GtkWidget *scrolled_window = gtk_scrolled_window_new();
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scrolled_window),
+                                    GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+    gtk_widget_set_vexpand(scrolled_window, TRUE);
+    gtk_widget_set_hexpand(scrolled_window, TRUE);
+    
+    // Task list container
+    task_list_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scrolled_window), task_list_box);
+    
+    gtk_box_append(GTK_BOX(main_vbox), scrolled_window);
+
+    // Start All Tasks button at the bottom
+    start_all_button = gtk_button_new_with_label("Start All Tasks");
+    gtk_widget_set_hexpand(start_all_button, TRUE);
+    gtk_widget_set_sensitive(start_all_button, FALSE); // Disabled by default
+    
+    gtk_box_append(GTK_BOX(main_vbox), start_all_button);
+
+    // Connect signals
+    g_signal_connect(button_add, "clicked", G_CALLBACK(on_add_task_clicked), NULL);
+    g_signal_connect(start_all_button, "clicked", G_CALLBACK(on_start_all_clicked), NULL);
+
+    return main_vbox;
+}
+
+/* Called on the main thread by batch.c (safe to update GTK widgets directly) */
+static void gui_batch_progress_cb(gpointer user_data, double fraction)
+{
+    GuiBatchUserData *ud = (GuiBatchUserData *)user_data;
+    if (!ud || !ud->task_id || !ud->panel)
+        return;
+
+    BatchTaskPanel *panel = ud->panel;
+    
+    // Update progress bar
+    gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(panel->progress_bar), fraction);
+    
+    // Update status label
+    if (fraction > 0.0 && fraction < 1.0) {
+        gchar *status_text = g_strdup_printf("%s... %.0f%%", 
+                                             panel->is_encode ? "Encoding" : "Decoding",
+                                             fraction * 100);
+        gtk_label_set_text(GTK_LABEL(panel->status_label), status_text);
+        g_free(status_text);
+    }
+}
+
+/* Called on the main thread when a task finishes */
+static void gui_batch_finished_cb(gpointer user_data, gboolean success, const char *message)
+{
+    GuiBatchUserData *ud = (GuiBatchUserData *)user_data;
+    if (!ud || !ud->task_id || !ud->panel)
+        goto cleanup;
+
+    BatchTaskPanel *panel = ud->panel;
+    
+    // Update progress bar to 100%
+    gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(panel->progress_bar), 1.0);
+    
+    // Update status label with color coding
+    if (success) {
+        gtk_label_set_markup(GTK_LABEL(panel->status_label), "<span foreground='green'>Complete ✓</span>");
+    } else {
+        gchar *error_markup = g_markup_printf_escaped("<span foreground='red'>Failed: %s</span>", 
+                                                       message ? message : "Unknown error");
+        gtk_label_set_markup(GTK_LABEL(panel->status_label), error_markup);
+        g_free(error_markup);
+    }
+    
+    // Mark task as no longer processing
+    panel->is_processing = FALSE;
+    
+    // Re-enable remove button
+    gtk_widget_set_sensitive(panel->remove_button, TRUE);
+    
+    // Check if all tasks are done, then re-enable start button if there are ready tasks
+    update_start_button_sensitivity();
+
+cleanup:
+    // Free the user_data we allocated when submitting the task
+    if (ud) {
+        g_free(ud->task_id);
+        g_free(ud);
+    }
+}
+
+/* Old function kept for backward compatibility if needed elsewhere */
+void gui_batch_update_progress(const gchar *task_id, double progress, gboolean done)
+{
+    // This function may be called from other parts of the code
+    // Look up the task panel and update it
+    BatchTaskPanel *panel = g_hash_table_lookup(task_panels, task_id);
+    if (panel) {
+        gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(panel->progress_bar), progress);
+        if (done) {
+            gtk_label_set_text(GTK_LABEL(panel->status_label), "Complete");
+        }
+    }
+}
