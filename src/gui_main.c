@@ -70,3 +70,30 @@ static void on_jpeg_warning_response(GObject *source, GAsyncResult *result, gpoi
     }
 }
 
+
+/* Callback for encode input file selection */
+static void on_encode_input_file_selected(GObject *source, GAsyncResult *result, gpointer user_data)
+{
+    GtkFileDialog *dialog = GTK_FILE_DIALOG(source);
+    GError *error = NULL;
+    
+    GFile *file = gtk_file_dialog_open_finish(dialog, result, &error);
+    
+    if (file != NULL)
+    {
+        if (encode_selected_input_file != NULL)
+            g_object_unref(encode_selected_input_file);
+        
+        encode_selected_input_file = file;
+        char *basename = g_file_get_basename(file);
+        gtk_button_set_label(GTK_BUTTON(encode_file_chooser_input), basename);
+        g_free(basename);
+    }
+    else if (error != NULL && !g_error_matches(error, GTK_DIALOG_ERROR, GTK_DIALOG_ERROR_DISMISSED))
+    {
+        g_warning("Error selecting input file: %s", error->message);
+    }
+    
+    if (error != NULL)
+        g_error_free(error);
+}
