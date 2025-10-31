@@ -473,3 +473,135 @@ static GtkWidget *create_batch_task_panel(gboolean is_encode)
 }
 
 
+
+/* Start a single task panel */
+static void start_task_panel(BatchTaskPanel *panel)
+{
+    // Mark as processing
+    panel->is_processing = TRUE;
+    
+    // Disable remove button
+    gtk_widget_set_sensitive(panel->remove_button, FALSE);
+    
+    // Disable input fields
+    gtk_widget_set_sensitive(panel->input_chooser, FALSE);
+    gtk_widget_set_sensitive(panel->output_chooser, FALSE);
+    gtk_widget_set_sensitive(panel->password_entry, FALSE);
+    
+    if (panel->is_encode) {
+        gtk_widget_set_sensitive(panel->payload_type_combo, FALSE);
+        gtk_widget_set_sensitive(panel->payload_text_view, FALSE);
+        gtk_widget_set_sensitive(panel->payload_file_chooser, FALSE);
+        gtk_widget_set_sensitive(panel->lsb_combo, FALSE);
+    }
+    
+    // Update status
+    gtk_label_set_text(GTK_LABEL(panel->status_label), panel->is_encode ? "Encoding..." : "Decoding...");
+    gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(panel->progress_bar), 0.0);
+    
+    // Get password
+    GtkEntryBuffer *buffer = gtk_entry_get_buffer(GTK_ENTRY(panel->password_entry));
+    const gchar *password = gtk_entry_buffer_get_text(buffer);
+    if (password && strlen(password) > 0) {
+        panel->password = g_strdup(password);
+    }
+    
+    // Prepare user data for callbacks
+    GuiBatchUserData *ud = g_new0(GuiBatchUserData, 1);
+    ud->task_id = g_strdup(panel->task_id);
+    ud->panel = panel;
+    
+    if (!panel->is_encode) {
+        // Decode task
+        char *stego_path = g_file_get_path(panel->input_file);
+        char *output_dir = g_file_get_path(panel->output_folder);
+        
+        panel->running_task = batch_decode_async(stego_path, output_dir, panel->password,
+                                                  gui_batch_progress_cb, gui_batch_finished_cb, ud);
+        
+        g_free(stego_path);
+        g_free(output_dir);
+    } else {
+        // Encode task
+        char *cover_path = g_file_get_path(panel->input_file);
+        char *output_dir = g_file_get_path(panel->output_folder);
+        
+        // Get LSB depth
+        guint lsb_selected = gtk_drop_down_get_selected(GTK_DROP_DOWN(panel->lsb_combo));
+        panel->lsb_depth = lsb_selected + 1; // 0,1,2 -> 1,2,3
+        
+        // Get payload
+        guint payload_type = gtk_drop_down_get_selected(GTK_DROP_DOWN(panel->payload_type_combo));
+
+        srand(time(NULL));
+        int rand_suffix = rand() % 10000;
+        
+        if (payload_type == 0) {
+            // Text message - save to temp file
+            GtkTextBuffer *text_buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(panel->payload_text_view));
+            GtkTextIter start, end;
+            gtk_text_buffer_get_bounds(text_buffer, &start, &end);
+            char *text = gtk_text_buffer_get_text(text_buffer, &start, &end, FALSE);
+            
+            // Create temp file for text payload
+            char temp_path[] = "/tmp/batch_payload_XXXXXX";
+            int fd = mkstemp(temp_path);
+            if (fd != -1) {
+                write(fd, text, strlen(text));
+                close(fd);
+                
+                // Generate output filename
+                char *input_basename = g_file_get_basename(panel->input_file);
+                char *dot = strrchr(input_basename, '.');
+                char output_filename[512];
+
+                if (dot) {
+                    size_t base_len = dot - input_basename;
+                    snprintf(output_filename, sizeof(output_filename), "%.*s_stego_%d.png", (int)base_len, input_basename, rand_suffix);
+                } else {
+                    snprintf(output_filename, sizeof(output_filename), "%s_stego_%d.png", input_basename, rand_suffix);
+                }
+                
+                char output_path[1024];
+                snprintf(output_path, sizeof(output_path), "%s/%s", output_dir, output_filename);
+                
+                panel->running_task = batch_encode_async(cover_path, temp_path, output_path, 
+                                                         panel->lsb_depth, panel->password,
+                                                         gui_batch_progress_cb, gui_batch_finished_cb, ud);
+                
+                // Clean up temp file after a delay (will be done in callback)
+                g_free(input_basename);
+            }
+            
+            g_free(text);
+        } else {
+            // File payload
+            char *payload_path = g_file_get_path(panel->payload_file);
+            
+            // Generate output filename
+            char *input_basename = g_file_get_basename(panel->input_file);
+            char *dot = strrchr(input_basename, '.');
+            char output_filename[512];
+            if (dot) {
+                size_t base_len = dot - input_basename;
+                snprintf(output_filename, sizeof(output_filename), "%.*s_stego_%d.png", (int)base_len, input_basename, rand_suffix);
+            } else {
+                snprintf(output_filename, sizeof(output_filename), "%s_stego_%d.png", input_basename, rand_suffix);
+            }
+            
+            char output_path[1024];
+            snprintf(output_path, sizeof(output_path), "%s/%s", output_dir, output_filename);
+            
+            panel->running_task = batch_encode_async(cover_path, payload_path, output_path,
+                                                     panel->lsb_depth, panel->password,
+                                                     gui_batch_progress_cb, gui_batch_finished_cb, ud);
+            
+            g_free(payload_path);
+            g_free(input_basename);
+        }
+        
+        g_free(cover_path);
+        g_free(output_dir);
+    }
+}
+
