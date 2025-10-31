@@ -772,4 +772,113 @@ static GtkWidget* create_encode_tab(void)
 }
 
 
+/* Create Decode tab content */
+static GtkWidget* create_decode_tab(void)
+{
+    GtkWidget *tab_decode = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
+    gtk_widget_set_margin_top(tab_decode, 10);
+    gtk_widget_set_margin_bottom(tab_decode, 10);
+    gtk_widget_set_margin_start(tab_decode, 10);
+    gtk_widget_set_margin_end(tab_decode, 10);
+
+    GtkWidget *grid = gtk_grid_new();
+    gtk_grid_set_row_spacing(GTK_GRID(grid), 10);
+    gtk_grid_set_column_spacing(GTK_GRID(grid), 10);
+    gtk_widget_set_hexpand(grid, TRUE);
+    gtk_widget_set_vexpand(grid, TRUE);
+    gtk_box_append(GTK_BOX(tab_decode), grid);
+
+    // Input Image (Stego Image)
+    GtkWidget *label_in = gtk_label_new("Stego Image:");
+    gtk_widget_set_halign(label_in, GTK_ALIGN_END);
+    
+    decode_file_chooser_input = gtk_button_new_with_label("Select stego image");
+    gtk_widget_set_hexpand(decode_file_chooser_input, TRUE);
+
+    // Output Directory
+    GtkWidget *label_out = gtk_label_new("Output Directory:");
+    gtk_widget_set_halign(label_out, GTK_ALIGN_END);
+    
+    decode_file_chooser_output = gtk_button_new_with_label("Select output directory");
+    gtk_widget_set_hexpand(decode_file_chooser_output, TRUE);
+
+    // Password
+    GtkWidget *label_pass = gtk_label_new("Password:");
+    gtk_widget_set_halign(label_pass, GTK_ALIGN_END);
+    
+    decode_entry_password = gtk_entry_new();
+    gtk_entry_set_visibility(GTK_ENTRY(decode_entry_password), FALSE);
+    gtk_widget_set_hexpand(decode_entry_password, TRUE);
+
+    // Progress bar
+    decode_progress_bar = gtk_progress_bar_new();
+    gtk_widget_set_hexpand(decode_progress_bar, TRUE);
+
+    // Decode button
+    button_decode = gtk_button_new_with_label("Decode");
+    gtk_widget_set_hexpand(button_decode, TRUE);
+
+    // Attach widgets to grid
+    gtk_grid_attach(GTK_GRID(grid), label_in, 0, 0, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), decode_file_chooser_input, 1, 0, 2, 1);
+    gtk_grid_attach(GTK_GRID(grid), label_out, 0, 1, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), decode_file_chooser_output, 1, 1, 2, 1);
+    gtk_grid_attach(GTK_GRID(grid), label_pass, 0, 2, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), decode_entry_password, 1, 2, 2, 1);
+    gtk_grid_attach(GTK_GRID(grid), decode_progress_bar, 0, 3, 3, 1);
+    gtk_grid_attach(GTK_GRID(grid), button_decode, 0, 4, 3, 1);
+
+    // Connect signals
+    g_signal_connect(decode_file_chooser_input, "clicked", G_CALLBACK(on_decode_input_chooser_clicked), NULL);
+    g_signal_connect(decode_file_chooser_output, "clicked", G_CALLBACK(on_decode_output_chooser_clicked), NULL);
+    g_signal_connect(button_decode, "clicked", G_CALLBACK(on_decode_clicked), NULL);
+
+    return tab_decode;
+}
+
+/* Build the interface */
+static void build_main_ui(void)
+{
+    window = gtk_window_new();
+    gtk_window_set_title(GTK_WINDOW(window), "C-Stego");
+    gtk_window_set_default_size(GTK_WINDOW(window), 800, 600);
+
+    // Create notebook for tabs
+    notebook_tabs = gtk_notebook_new();
+    gtk_window_set_child(GTK_WINDOW(window), notebook_tabs);
+
+    // Create Encode tab
+    GtkWidget *tab_encode = create_encode_tab();
+
+    // Create Decode tab
+    GtkWidget *tab_decode = create_decode_tab();
+
+    // Create Batch tab
+    GtkWidget *tab_batch = gui_batch_create_tab();
+
+    // Add tabs to notebook
+    gtk_notebook_append_page(GTK_NOTEBOOK(notebook_tabs), tab_encode, gtk_label_new("Encode"));
+    gtk_notebook_append_page(GTK_NOTEBOOK(notebook_tabs), tab_decode, gtk_label_new("Decode"));
+    gtk_notebook_append_page(GTK_NOTEBOOK(notebook_tabs), tab_batch, gtk_label_new("Batch"));
+
+    // Connect window destroy signal
+    g_signal_connect(window, "destroy", G_CALLBACK(on_window_destroy), NULL);
+
+    gtk_window_present(GTK_WINDOW(window));
+}
+
+/* Public entrypoints */
+void gui_init(int *argc, char ***argv)
+{
+    gtk_init();
+}
+
+void gui_show_main_window(void)
+{
+    build_main_ui();
+    GMainLoop *loop = g_main_loop_new(NULL, FALSE);
+    g_main_loop_run(loop);
+    g_main_loop_unref(loop);
+}
+
 
