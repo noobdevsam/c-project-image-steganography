@@ -108,3 +108,76 @@ static void sha256_transform(sha256_ctx *ctx)
     ctx->state[7] += h;
 }
 
+
+static void sha256_init(sha256_ctx *ctx)
+{
+    ctx->state[0] = 0x6a09e667ul;
+    ctx->state[1] = 0xbb67ae85ul;
+    ctx->state[2] = 0x3c6ef372ul;
+    ctx->state[3] = 0xa54ff53aul;
+    ctx->state[4] = 0x510e527ful;
+    ctx->state[5] = 0x9b05688cul;
+    ctx->state[6] = 0x1f83d9abul;
+    ctx->state[7] = 0x5be0cd19ul;
+    ctx->bitlen = 0;
+    ctx->datalen = 0;
+}
+
+static void sha256_update(sha256_ctx *ctx, const uint8_t *data, size_t len)
+{
+    for (size_t i = 0; i < len; ++i)
+    {
+        ctx->data[ctx->datalen++] = data[i];
+        if (ctx->datalen == 64)
+        {
+            sha256_transform(ctx);
+            ctx->bitlen += 512;
+            ctx->datalen = 0;
+        }
+    }
+}
+
+static void sha256_final(sha256_ctx *ctx, uint8_t hash[32])
+{
+    size_t i = ctx->datalen;
+
+    /* Pad whatever data is left in the buffer. */
+    if (ctx->datalen < 56)
+    {
+        ctx->data[i++] = 0x80;
+        while (i < 56)
+            ctx->data[i++] = 0x00;
+    }
+    else
+    {
+        ctx->data[i++] = 0x80;
+        while (i < 64)
+            ctx->data[i++] = 0x00;
+        sha256_transform(ctx);
+        memset(ctx->data, 0, 56);
+    }
+
+    ctx->bitlen += ctx->datalen * 8;
+    ctx->data[63] = (uint8_t)(ctx->bitlen);
+    ctx->data[62] = (uint8_t)(ctx->bitlen >> 8);
+    ctx->data[61] = (uint8_t)(ctx->bitlen >> 16);
+    ctx->data[60] = (uint8_t)(ctx->bitlen >> 24);
+    ctx->data[59] = (uint8_t)(ctx->bitlen >> 32);
+    ctx->data[58] = (uint8_t)(ctx->bitlen >> 40);
+    ctx->data[57] = (uint8_t)(ctx->bitlen >> 48);
+    ctx->data[56] = (uint8_t)(ctx->bitlen >> 56);
+    sha256_transform(ctx);
+
+    for (i = 0; i < 4; ++i)
+    {
+        hash[i] = (uint8_t)((ctx->state[0] >> (24 - i * 8)) & 0x000000ff);
+        hash[i + 4] = (uint8_t)((ctx->state[1] >> (24 - i * 8)) & 0x000000ff);
+        hash[i + 8] = (uint8_t)((ctx->state[2] >> (24 - i * 8)) & 0x000000ff);
+        hash[i + 12] = (uint8_t)((ctx->state[3] >> (24 - i * 8)) & 0x000000ff);
+        hash[i + 16] = (uint8_t)((ctx->state[4] >> (24 - i * 8)) & 0x000000ff);
+        hash[i + 20] = (uint8_t)((ctx->state[5] >> (24 - i * 8)) & 0x000000ff);
+        hash[i + 24] = (uint8_t)((ctx->state[6] >> (24 - i * 8)) & 0x000000ff);
+        hash[i + 28] = (uint8_t)((ctx->state[7] >> (24 - i * 8)) & 0x000000ff);
+    }
+}
+
