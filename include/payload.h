@@ -18,23 +18,15 @@ extern "C"
     {
         unsigned char *data;
         size_t size;
-        int encrypted; /* boolean flag: 0 = plain, 1 = encrypted */
+        int encrypted;
     };
 
-    /* Load payload from file into `out`. Caller must call payload_free when done.
-     * Returns 0 on success, non-zero on error.
-     */
     int payload_load_from_file(const char *path, struct Payload *out);
 
-    /* Create payload from a text string. The text is copied internally.
-     * Caller must call payload_free when done. Returns 0 on success.
-     */
     int payload_from_text(const char *text, struct Payload *out);
 
-    /* Write payload to disk at outpath. Returns 0 on success. */
     int payload_write_to_file(const struct Payload *payload, const char *outpath);
 
-    /* Free internal buffers of payload. Safe to call on partially-initialized payloads. */
     void payload_free(struct Payload *p);
 
 #ifdef __cplusplus
