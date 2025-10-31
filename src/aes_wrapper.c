@@ -181,3 +181,48 @@ static void sha256_final(sha256_ctx *ctx, uint8_t hash[32])
     }
 }
 
+
+/* ---------- HMAC-SHA256 ---------- */
+
+static void hmac_sha256(const uint8_t *key, size_t key_len,
+                        const uint8_t *msg, size_t msg_len,
+                        uint8_t out[32])
+{
+    uint8_t k_ipad[64];
+    uint8_t k_opad[64];
+    uint8_t tk[32];
+
+    if (key_len > 64)
+    {
+        sha256_ctx tctx;
+        sha256_init(&tctx);
+        sha256_update(&tctx, key, key_len);
+        sha256_final(&tctx, tk);
+        key = tk;
+        key_len = 32;
+    }
+
+    memset(k_ipad, 0, 64);
+    memset(k_opad, 0, 64);
+    memcpy(k_ipad, key, key_len);
+    memcpy(k_opad, key, key_len);
+
+    for (int i = 0; i < 64; ++i)
+    {
+        k_ipad[i] ^= 0x36;
+        k_opad[i] ^= 0x5c;
+    }
+
+    sha256_ctx ctx;
+    sha256_init(&ctx);
+    sha256_update(&ctx, k_ipad, 64);
+    sha256_update(&ctx, msg, msg_len);
+    uint8_t inner[32];
+    sha256_final(&ctx, inner);
+
+    sha256_init(&ctx);
+    sha256_update(&ctx, k_opad, 64);
+    sha256_update(&ctx, inner, 32);
+    sha256_final(&ctx, out);
+}
+
