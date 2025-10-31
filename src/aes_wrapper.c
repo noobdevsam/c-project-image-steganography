@@ -226,3 +226,49 @@ static void hmac_sha256(const uint8_t *key, size_t key_len,
     sha256_final(&ctx, out);
 }
 
+
+/* ---------- PBKDF2-HMAC-SHA256 ---------- */
+/* Implements PBKDF2 as defined in RFC 2898 using HMAC-SHA256 */
+static int pbkdf2_hmac_sha256(const uint8_t *password, size_t password_len,
+                              const uint8_t *salt, size_t salt_len,
+                              uint32_t iterations,
+                              uint8_t *out, size_t out_len)
+{
+    if (!password || !salt || !out)
+        return -1;
+    uint32_t block_count = (out_len + 31) / 32;
+    uint8_t U[32];
+    uint8_t T[32];
+    uint8_t *asalt = malloc(salt_len + 4);
+    if (!asalt)
+        return -2;
+    memcpy(asalt, salt, salt_len);
+
+    size_t produced = 0;
+    for (uint32_t block = 1; block <= block_count; ++block)
+    {
+        /* asalt = salt || INT(block) (big-endian) */
+        asalt[salt_len + 0] = (uint8_t)((block >> 24) & 0xFF);
+        asalt[salt_len + 1] = (uint8_t)((block >> 16) & 0xFF);
+        asalt[salt_len + 2] = (uint8_t)((block >> 8) & 0xFF);
+        asalt[salt_len + 3] = (uint8_t)(block & 0xFF);
+
+        hmac_sha256(password, password_len, asalt, salt_len + 4, U);
+        memcpy(T, U, 32);
+
+        for (uint32_t i = 1; i < iterations; ++i)
+        {
+            hmac_sha256(password, password_len, U, 32, U);
+            for (int j = 0; j < 32; ++j)
+                T[j] ^= U[j];
+        }
+
+        size_t to_copy = (produced + 32 > out_len) ? (out_len - produced) : 32;
+        memcpy(out + produced, T, to_copy);
+        produced += to_copy;
+    }
+
+    free(asalt);
+    return 0;
+}
+
