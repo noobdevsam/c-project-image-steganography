@@ -140,4 +140,17 @@ Sanity/security notes
 - PKCS#7 padding checked during decrypt; invalid padding returns error.
 - No authentication (no HMAC/AEAD) — ciphertext integrity not verified. If attackers can tamper ciphertext, decryption may succeed with wrong plaintext or padding oracle risks. Consider adding HMAC or switching to authenticated AES-GCM.
 
-If you want, I can produce a simple diagram or annotated sequence using actual variable names and memory offsets.
+
+---
+নিচে বক্তা সরাসরি বলার মত সামান্য বড় কিন্তু সংক্ষিপ্ত ব্যাখ্যা দিলাম — সহজ, প্রাঞ্জল এবং সময় কম লাগবে:
+
+"এই প্রোজেক্টে এনক্রিপশন করতে আমরা প্রথমে ইউজারের পাসওয়ার্ড থেকে শক্তিশালী কী তৈরি করি। প্রতিবার একটা র‍্যান্ডম ১৬-বাইট salt এবং ১৬-বাইট IV তৈরি করা হয়; salt+পাসওয়ার্ড দিয়ে PBKDF2 চালিয়ে ৩২-বাইট AES‑256 কী উদ্ভূত হয়। তারপর পাঠ্য বা ফাইলের কাঁচা ডেটা PKCS#7 প্যাড করে ব্লক সাইজ ১৬ অনুযায়ী ভরাট করা হয় এবং AES-CBC মোডে এনক্রিপ্ট করা হয়। আউটপুটে আমরা রেখেছি সাজানোভাবে: প্রথমে salt, তারপর IV, শেষে ciphertext — ফলে ডিক্রিপশনে salt দেখে একই কী পুনরায় তৈরি করা যায়। ডিক্রিপশনে ওই লেআউট থেকে salt ও IV আলাদা করে একই পাসওয়ার্ডে PBKDF2 চালিয়ে কী বের করি, AES‑CBC দিয়ে ডিক্রিপ করি এবং PKCS#7 আনপ্যাড করে আসল ডেটা পাই। একটি গুরুত্বপূর্ণ সতর্কতা: এখানে ডেটার অখণ্ডতা যাচাইয়ের জন্য আলাদা HMAC বা AEAD নেই, তাই ম্যান-ইন-দ্য-মিডল বা ট্যাম্পারিং থেকে রক্ষা করতে HMAC/AEAD যোগ করা ভাল।"
+
+সংক্ষেপে বলার জন্য দ্রুত পয়েন্টগুলো (প্রতি পয়েন্ট ২–৩ সেকেন্ড):
+- "salt + password → PBKDF2 → AES-256 কী।"
+- "ডেটা PKCS#7 দিয়ে ব্লকে প্যাড, তারপর AES‑CBC এ এনক্রিপ্ট।"
+- "আউটপুট: [salt][IV][ciphertext] — ডিক্রিপশনে salt দিয়ে কী পুনরায় তৈরি।"
+- "নোট: অখণ্ডতা যাচাই নেই — HMAC বা AEAD যুক্ত করা নিরাপদ।"
+
+এইটুকু বললে ৩০–৪৫ সেকেন্ডে পুরো প্রক্রিয়ার ধারনা পৌছে যাবে।
+---
