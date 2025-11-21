@@ -154,3 +154,13 @@ Sanity/security notes
 
 এইটুকু বললে ৩০–৪৫ সেকেন্ডে পুরো প্রক্রিয়ার ধারনা পৌছে যাবে।
 ---
+Here's the English translation:
+
+"To encrypt in this project we first derive a strong key from the user's password. For each encryption we generate a random 16‑byte salt and a random 16‑byte IV; using salt + password with PBKDF2 we derive a 32‑byte AES‑256 key. Then the raw data (text or file) is PKCS#7 padded to a 16‑byte block size and encrypted with AES‑CBC. The output is stored in order: [salt][IV][ciphertext] — so during decryption the salt allows the same key to be recreated. During decryption we parse the layout to get salt and IV, run PBKDF2 with the same password to recreate the key, decrypt with AES‑CBC, and PKCS#7‑unpad to recover the original data. One important caution: this scheme does not include an integrity check (no HMAC or AEAD), so it’s advisable to add HMAC or use an AEAD mode to protect against tampering."
+
+Quick summary points to say fast (each ~2–3 seconds):
+- "salt + password → PBKDF2 → AES‑256 key."
+- "Data is PKCS#7 padded, then AES‑CBC encrypted."
+- "Output layout: [salt][IV][ciphertext] — salt lets you recreate the key for decryption."
+- "Note: no integrity verification — add HMAC or use AEAD for better security."
+---
